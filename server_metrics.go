@@ -2,8 +2,11 @@ package grpc_prometheus
 
 import (
 	"context"
-	"github.com/grpc-ecosystem/go-grpc-prometheus/packages/grpcstatus"
+	"fmt"
+	"strings"
+
 	prom "github.com/prometheus/client_golang/prometheus"
+	"github.com/skit-ai/go-grpc-prometheus/packages/grpcstatus"
 
 	"google.golang.org/grpc"
 )
@@ -31,22 +34,22 @@ func NewServerMetrics(counterOpts ...CounterOption) *ServerMetrics {
 			opts.apply(prom.CounterOpts{
 				Name: "grpc_server_started_total",
 				Help: "Total number of RPCs started on the server.",
-			}), []string{"grpc_type", "grpc_service", "grpc_method"}),
+			}), []string{"grpc_type", "grpc_service", "grpc_method", "client_uuid", "flow_uuid"}),
 		serverHandledCounter: prom.NewCounterVec(
 			opts.apply(prom.CounterOpts{
 				Name: "grpc_server_handled_total",
 				Help: "Total number of RPCs completed on the server, regardless of success or failure.",
-			}), []string{"grpc_type", "grpc_service", "grpc_method", "grpc_code"}),
+			}), []string{"grpc_type", "grpc_service", "grpc_method", "grpc_code", "client_uuid", "flow_uuid"}),
 		serverStreamMsgReceived: prom.NewCounterVec(
 			opts.apply(prom.CounterOpts{
 				Name: "grpc_server_msg_received_total",
 				Help: "Total number of RPC stream messages received on the server.",
-			}), []string{"grpc_type", "grpc_service", "grpc_method"}),
+			}), []string{"grpc_type", "grpc_service", "grpc_method", "client_uuid", "flow_uuid"}),
 		serverStreamMsgSent: prom.NewCounterVec(
 			opts.apply(prom.CounterOpts{
 				Name: "grpc_server_msg_sent_total",
 				Help: "Total number of gRPC stream messages sent by the server.",
-			}), []string{"grpc_type", "grpc_service", "grpc_method"}),
+			}), []string{"grpc_type", "grpc_service", "grpc_method", "client_uuid", "flow_uuid"}),
 		serverHandledHistogramEnabled: false,
 		serverHandledHistogramOpts: prom.HistogramOpts{
 			Name:    "grpc_server_handling_seconds",
@@ -68,7 +71,7 @@ func (m *ServerMetrics) EnableHandlingTimeHistogram(opts ...HistogramOption) {
 	if !m.serverHandledHistogramEnabled {
 		m.serverHandledHistogram = prom.NewHistogramVec(
 			m.serverHandledHistogramOpts,
-			[]string{"grpc_type", "grpc_service", "grpc_method"},
+			[]string{"grpc_type", "grpc_service", "grpc_method", "client_uuid", "flow_uuid"},
 		)
 	}
 	m.serverHandledHistogramEnabled = true
@@ -119,7 +122,7 @@ func (m *ServerMetrics) UnaryServerInterceptor() func(ctx context.Context, req i
 func (m *ServerMetrics) StreamServerInterceptor() func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		monitor := newServerReporter(m, streamRPCType(info), info.FullMethod)
-		err := handler(srv, &monitoredServerStream{ss, monitor})
+		err := handler(srv, &monitoredServerStream{ss, monitor, true})
 		st, _ := grpcstatus.FromError(err)
 		monitor.Handled(st.Code())
 		return err
@@ -151,6 +154,7 @@ func streamRPCType(info *grpc.StreamServerInfo) grpcType {
 type monitoredServerStream struct {
 	grpc.ServerStream
 	monitor *serverReporter
+	first   bool
 }
 
 func (s *monitoredServerStream) SendMsg(m interface{}) error {
@@ -164,6 +168,27 @@ func (s *monitoredServerStream) SendMsg(m interface{}) error {
 func (s *monitoredServerStream) RecvMsg(m interface{}) error {
 	err := s.ServerStream.RecvMsg(m)
 	if err == nil {
+		if s.first {
+			m_string := fmt.Sprint(m)
+
+			if strings.Contains(m_string, "client_uuid") {
+				splits := strings.Split(m_string, "client_uuid:")
+				if len(splits) > 1 {
+					client_uuid := strings.Split(splits[1], "\"")[1]
+					s.monitor.clientUuid = client_uuid
+				}
+			}
+
+			if strings.Contains(m_string, "flow_uuid") {
+				splits := strings.Split(m_string, "flow_uuid:")
+				if len(splits) > 1 {
+					flow_uuid := strings.Split(splits[1], "\"")[1]
+					s.monitor.flowUuid = flow_uuid
+				}
+			}
+
+			s.first = false
+		}
 		s.monitor.ReceivedMessage()
 	}
 	return err

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/grpc-ecosystem/go-grpc-prometheus/packages/grpcstatus"
 	prom "github.com/prometheus/client_golang/prometheus"
+	"github.com/skit-ai/go-grpc-prometheus/packages/grpcstatus"
 
 	"google.golang.org/grpc"
 )

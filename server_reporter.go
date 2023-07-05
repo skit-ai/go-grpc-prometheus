@@ -17,22 +17,27 @@ type serverReporter struct {
 	startTime   time.Time
 	clientUuid  string
 	flowUuid    string
+	first       bool
 }
 
 func newServerReporter(m *ServerMetrics, rpcType grpcType, fullMethod string) *serverReporter {
 	r := &serverReporter{
 		metrics: m,
 		rpcType: rpcType,
+		first:   true,
 	}
 	if r.metrics.serverHandledHistogramEnabled {
 		r.startTime = time.Now()
 	}
 	r.serviceName, r.methodName = splitMethodName(fullMethod)
-	r.metrics.serverStartedCounter.WithLabelValues(string(r.rpcType), r.serviceName, r.methodName, r.clientUuid, r.flowUuid).Inc()
 	return r
 }
 
 func (r *serverReporter) ReceivedMessage() {
+	if r.first {
+		r.metrics.serverStartedCounter.WithLabelValues(string(r.rpcType), r.serviceName, r.methodName, r.clientUuid, r.flowUuid).Inc()
+		r.first = false
+	}
 	r.metrics.serverStreamMsgReceived.WithLabelValues(string(r.rpcType), r.serviceName, r.methodName, r.clientUuid, r.flowUuid).Inc()
 	if r.metrics.serverHandledHistogramEnabled {
 		r.startTime = time.Now()
